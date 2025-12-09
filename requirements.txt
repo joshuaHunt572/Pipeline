@@ -1,0 +1,8 @@
+# Pipeline Processing Requirements
+# Python 3.11+
+
+# Data validation and schema enforcement
+pydantic>=2.0.0
+
+# YAML configuration parsing
+pyyaml>=6.0.0
