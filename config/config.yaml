@@ -1,0 +1,90 @@
+# Pipeline Configuration
+# Global configuration for all processing modules
+
+# Logging configuration
+logging:
+  level: INFO  # DEBUG, INFO, WARNING, ERROR, CRITICAL
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
+# Module 1: Whisper
+whisper:
+  inbox: "pipeline/1_whisper/Whisper_Inbox"
+  output: "pipeline/1_whisper/Whisper_Output"
+  log_file: "pipeline/1_whisper/whisper.log"
+  poll_interval: 5  # seconds
+  supported_formats:
+    - ".mp3"
+    - ".wav"
+    - ".m4a"
+    - ".flac"
+    - ".ogg"
+    - ".aac"
+
+# Module 2: Extractor
+extractor:
+  inbox: "pipeline/2_extractor/Extractor_Inbox"
+  output: "pipeline/2_extractor/Extractor_Output"
+  log_file: "pipeline/2_extractor/extractor.log"
+  poll_interval: 5  # seconds
+
+# Module 3: Categorizer
+categorizer:
+  inbox: "pipeline/3_categorizer/Categorizer_Inbox"
+  output: "pipeline/3_categorizer/Categorizer_Output"
+  log_file: "pipeline/3_categorizer/categorizer.log"
+  poll_interval: 5  # seconds
+
+# Module 4: Preprocess
+preprocess:
+  inbox: "pipeline/4_preprocess/Preprocess_Inbox"
+  output: "pipeline/4_preprocess/Preprocessing_Output"
+  log_file: "pipeline/4_preprocess/preprocess.log"
+  poll_interval: 5  # seconds
+
+# Module 5: Prime
+prime:
+  inbox: "pipeline/5_prime/Prime_Inbox"
+  output: "pipeline/5_prime/Prime_Output"
+  final_output: "pipeline/5_prime/Final_Output/prime"
+  log_file: "pipeline/5_prime/prime.log"
+  poll_interval: 5  # seconds
+
+# Module 6: Output Engine
+output_engine:
+  inbox: "pipeline/6_output_engine/Output_Inbox"
+  final_output: "pipeline/6_output_engine/Final_Output"
+  log_file: "pipeline/6_output_engine/output_engine.log"
+  poll_interval: 5  # seconds
+  output_formats:
+    - "table"
+    - "list"
+    - "summary"
+    - "json"
+
+# Module 7: Synthesis
+synthesis:
+  inbox: "pipeline/7_synthesis/Synthesis_Inbox"
+  output: "pipeline/7_synthesis/Synthesized_Output"
+  final_output: "pipeline/7_synthesis/Final_Output/deliverables"
+  log_file: "pipeline/7_synthesis/synthesis.log"
+  poll_interval: 5  # seconds
+
+# Module 8: Cloud Dispatch
+cloud_dispatch:
+  inbox: "pipeline/8_cloud_dispatch/Dispatch_Inbox"
+  cloud_results: "pipeline/8_cloud_dispatch/Cloud_Results"
+  log_file: "pipeline/8_cloud_dispatch/dispatch.log"
+  poll_interval: 5  # seconds
+  organize_by_date: true
+
+# Pipeline flow configuration
+pipeline_flow:
+  auto_transfer: false  # If true, modules automatically move files to next inbox
+  transfer_mappings:
+    whisper: "pipeline/2_extractor/Extractor_Inbox"
+    extractor: "pipeline/3_categorizer/Categorizer_Inbox"
+    categorizer: "pipeline/4_preprocess/Preprocess_Inbox"
+    preprocess: "pipeline/5_prime/Prime_Inbox"
+    prime: "pipeline/6_output_engine/Output_Inbox"
+    output_engine: "pipeline/7_synthesis/Synthesis_Inbox"
+    synthesis: "pipeline/8_cloud_dispatch/Dispatch_Inbox"
