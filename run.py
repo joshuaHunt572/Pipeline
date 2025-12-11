@@ -97,15 +97,12 @@ class PipelineSupervisor:
         self.logger = logging.getLogger('Supervisor')
         self.logger.setLevel(logging.INFO)
 
-        # File handler
         fh = logging.FileHandler(log_file)
         fh.setLevel(logging.INFO)
 
-        # Console handler
         ch = logging.StreamHandler()
         ch.setLevel(logging.INFO)
 
-        # Formatter
         formatter = logging.Formatter(
             '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
         )
@@ -161,7 +158,6 @@ class PipelineSupervisor:
 
             process.terminate()
 
-            # Wait for graceful shutdown
             try:
                 process.wait(timeout=10)
             except subprocess.TimeoutExpired:
@@ -182,72 +178,89 @@ class PipelineSupervisor:
         if name not in self.processes:
             return False
 
-        process = self.processes[name]
-        return process.poll() is None
+        return self.processes[name].poll() is None
 
     def restart_module(self, name: str) -> bool:
         """Restart a module"""
         self.logger.info(f"Restarting module: {name}")
 
-        # Find module definition
         module = next((m for m in self.modules if m['name'] == name), None)
         if not module:
             self.logger.error(f"Module {name} not found in definitions")
             return False
 
-        # Stop if running
         if name in self.processes:
             self.stop_module(name)
 
-        # Start again
         return self.start_module(module)
 
-    def start_all_modules(self):
-        """Start all modules in sequence"""
-        self.logger.info("Starting all pipeline modules...")
+    # ---------------------------------------------------------
+    # 🔥 NEW FUNCTION: File transfer engine
+    # ---------------------------------------------------------
+    def transfer_outputs(self):
+        """Move files from module outputs to the next module's inbox."""
+        mappings = self.config.get("pipeline_flow", {}).get("transfer_mappings", {})
 
+        for module_name, next_inbox in mappings.items():
+
+            # Find module conf
+            module_conf = self.config.get(module_name, {})
+            output_dir = module_conf.get("output")
+            if not output_dir:
+                continue
+
+            output_path = Path(output_dir)
+            next_inbox_path = Path(next_inbox)
+
+            if not output_path.exists():
+                continue
+
+            for file in output_path.iterdir():
+                if file.is_file() and file.name != ".gitkeep":
+                    dest = next_inbox_path / file.name
+                    try:
+                        file.rename(dest)
+                        self.logger.info(f"Transferred {file} → {dest}")
+                    except Exception as e:
+                        self.logger.error(f"Failed to transfer {file}: {e}")
+
+    # ---------------------------------------------------------
+    # END NEW FUNCTION
+    # ---------------------------------------------------------
+
+    def start_all_modules(self):
+        self.logger.info("Starting all pipeline modules...")
         for module in self.modules:
             self.start_module(module)
-            time.sleep(1)  # Brief delay between starts
-
+            time.sleep(1)
         self.logger.info("All modules started")
 
     def stop_all_modules(self):
-        """Stop all running modules"""
         self.logger.info("Stopping all modules...")
-
-        # Stop in reverse order
         for module in reversed(self.modules):
             name = module['name']
             if name in self.processes:
                 self.stop_module(name)
-
         self.logger.info("All modules stopped")
 
     def monitor_modules(self):
-        """Monitor module health and restart if needed"""
+        """Monitor health AND perform automatic file transfers."""
         while self.running:
+
+            # Restart crashed modules
             for module in self.modules:
-                name = module['name']
-
+                name = module["name"]
                 if not self.check_module_health(name):
-                    self.logger.warning(f"Module {name} is not running!")
+                    self.logger.warning(f"Module {name} stopped unexpectedly")
+                    self.restart_module(name)
 
-                    if name in self.processes:
-                        # Process crashed
-                        process = self.processes[name]
-                        returncode = process.poll()
-                        self.logger.error(f"Module {name} crashed with return code {returncode}")
-                        del self.processes[name]
+            # NEW: Move files down the pipeline
+            if self.config.get("pipeline_flow", {}).get("auto_transfer", False):
+                self.transfer_outputs()
 
-                        # Attempt restart
-                        self.logger.info(f"Attempting to restart {name}...")
-                        self.start_module(module)
-
-            time.sleep(10)  # Check every 10 seconds
+            time.sleep(2)
 
     def print_status(self):
-        """Print status of all modules"""
         print("\n" + "=" * 80)
         print("PIPELINE STATUS")
         print("=" * 80)
@@ -270,54 +283,33 @@ class PipelineSupervisor:
         print("=" * 80 + "\n")
 
     def run(self):
-        """Main supervisor loop"""
         self.logger.info("Pipeline Supervisor starting...")
-
-        # Start all modules
         self.start_all_modules()
 
-        # Print initial status
         time.sleep(2)
         self.print_status()
 
         try:
-            # Monitor modules
             self.monitor_modules()
-
         except KeyboardInterrupt:
             self.logger.info("Shutdown requested by user")
-
         finally:
             self.stop_all_modules()
             self.logger.info("Pipeline Supervisor stopped")
 
 
 def main():
-    """Entry point"""
     import argparse
 
     parser = argparse.ArgumentParser(description="Pipeline Supervisor")
-    parser.add_argument(
-        '--config',
-        default='config/config.yaml',
-        help='Path to configuration file'
-    )
-    parser.add_argument(
-        '--module',
-        help='Start only a specific module'
-    )
-    parser.add_argument(
-        '--status',
-        action='store_true',
-        help='Print status and exit'
-    )
-
+    parser.add_argument('--config', default='config/config.yaml')
+    parser.add_argument('--module')
+    parser.add_argument('--status', action='store_true')
     args = parser.parse_args()
 
     supervisor = PipelineSupervisor(config_path=args.config)
 
     if args.module:
-        # Start only specified module
         module = next((m for m in supervisor.modules if m['name'] == args.module), None)
         if module:
             supervisor.start_module(module)
@@ -327,16 +319,9 @@ def main():
                     time.sleep(1)
             except KeyboardInterrupt:
                 supervisor.stop_module(args.module)
-        else:
-            print(f"Module {args.module} not found")
-            print(f"Available modules: {', '.join(m['name'] for m in supervisor.modules)}")
-
     elif args.status:
-        # Just print status
         supervisor.print_status()
-
     else:
-        # Run full supervisor
         supervisor.run()
 
 
