@@ -1,32 +1,178 @@
-def _build_prompt(self, facts: List[str], unknown: List[str]) -> str:
-    return f"""
+#!/usr/bin/env python3
+"""
+Categorizer Module
+Categorizes extracted facts into tasks, events, and notes using an LLM.
+"""
+
+import os
+import sys
+import json
+import time
+import logging
+import shutil
+from pathlib import Path
+from datetime import datetime
+from typing import Dict, Any, List
+
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+
+import yaml
+from pydantic import BaseModel, Field, ValidationError
+
+# -----------------------------
+# OUTPUT SCHEMA
+# -----------------------------
+
+class CategorizerOutput(BaseModel):
+    tasks: List[Dict[str, Any]] = Field(default_factory=list)
+    events: List[Dict[str, Any]] = Field(default_factory=list)
+    notes: List[str] = Field(default_factory=list)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+# -----------------------------
+# MODULE
+# -----------------------------
+
+class CategorizerModule:
+
+    def __init__(self, config_path: str = "config/config.yaml"):
+        self.config = self._load_config(config_path)
+        self.module_config = self.config.get("categorizer", {})
+        self.llm_config = self.module_config.get("llm", {})
+
+        self.inbox_dir = Path(self.module_config.get("inbox"))
+        self.output_dir = Path(self.module_config.get("output"))
+        self.archive_dir = self.inbox_dir / "archive"
+
+        for d in [self.inbox_dir, self.output_dir, self.archive_dir]:
+            d.mkdir(parents=True, exist_ok=True)
+
+        self._setup_logging()
+        self.poll_interval = self.module_config.get("poll_interval", 5)
+
+        # LLM selection
+        self.provider = self.llm_config.get("provider", "local")
+        self.model = self.llm_config.get("model", "mistral")
+        self.temperature = self.llm_config.get("temperature", 0.2)
+
+        self.logger.info(f"Categorizer ready | provider={self.provider} model={self.model}")
+
+    # -----------------------------
+    # CONFIG / LOGGING
+    # -----------------------------
+
+    def _load_config(self, path: str) -> Dict:
+        with open(path, "r") as f:
+            return yaml.safe_load(f) or {}
+
+    def _setup_logging(self):
+        self.logger = logging.getLogger("Categorizer")
+        self.logger.setLevel(logging.INFO)
+
+        fh = logging.FileHandler("pipeline/3_categorizer/categorizer.log")
+        ch = logging.StreamHandler()
+
+        fmt = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+        fh.setFormatter(fmt)
+        ch.setFormatter(fmt)
+
+        self.logger.addHandler(fh)
+        self.logger.addHandler(ch)
+
+    # -----------------------------
+    # LLM LOGIC
+    # -----------------------------
+
+    def build_prompt(self, facts: List[str], unknown: List[str]) -> str:
+        return f"""
 You are a classification engine.
 
-Input:
+Given FACTS and UNKNOWNS, output JSON ONLY in this exact schema:
+
+{{
+  "tasks": [{{"task": "...", "priority": "low|medium|high", "status": "pending"}}],
+  "events": [{{"event": "...", "date": "ISO|TBD", "type": "meeting|deadline|general"}}],
+  "notes": ["..."]
+}}
+
 FACTS:
 {json.dumps(facts, indent=2)}
 
-UNKNOWN ITEMS:
+UNKNOWNS:
 {json.dumps(unknown, indent=2)}
-
-Task:
-Classify the information into THREE categories:
-1. tasks (actionable items)
-2. events (time-bound or scheduled)
-3. notes (informational, non-actionable)
-
-Rules:
-- Output JSON ONLY
-- Do not invent information
-- If unsure, place the item in notes
-- Tasks must include: task, priority (low|medium|high), status
-- Events must include: event, date (or "TBD"), type
-- Notes are plain strings
-
-Output schema:
-{{
-  "tasks": [...],
-  "events": [...],
-  "notes": [...]
-}}
 """
+
+    def llm_categorize(self, prompt: str) -> Dict[str, Any]:
+        """
+        Swap this function to change models.
+        """
+        if self.provider == "local":
+            from llama_cpp import Llama
+
+            llm = Llama(
+                model_path=f"models/{self.model}.gguf",
+                n_ctx=4096,
+                temperature=self.temperature
+            )
+
+            output = llm(prompt, max_tokens=1024)
+            text = output["choices"][0]["text"]
+
+        else:
+            raise RuntimeError("Only local LLM enabled for now")
+
+        return json.loads(text)
+
+    # -----------------------------
+    # PROCESSING
+    # -----------------------------
+
+    def process_file(self, file_path: Path) -> CategorizerOutput:
+        with open(file_path) as f:
+            data = json.load(f)
+
+        facts = data.get("facts", [])
+        unknown = data.get("unknown", [])
+
+        prompt = self.build_prompt(facts, unknown)
+        raw = self.llm_categorize(prompt)
+
+        output = CategorizerOutput(**raw)
+        output.metadata = {
+            "timestamp": datetime.now().isoformat(),
+            "processing_module": "categorizer",
+            "model": self.model
+        }
+
+        return output
+
+    def safe_write(self, output: CategorizerOutput, source: Path):
+        name = source.stem.replace("_extracted", "") + "_categorized.json"
+        path = self.output_dir / name
+        with open(path, "w") as f:
+            json.dump(output.model_dump(), f, indent=2)
+
+    def archive(self, path: Path):
+        shutil.move(str(path), self.archive_dir / path.name)
+
+    def process_inbox(self):
+        for file in self.inbox_dir.glob("*.json"):
+            try:
+                out = self.process_file(file)
+                self.safe_write(out, file)
+                self.archive(file)
+                self.logger.info(f"Categorized {file.name}")
+            except Exception as e:
+                self.logger.error(f"Failed {file.name}: {e}", exc_info=True)
+
+    def run(self):
+        while True:
+            self.process_inbox()
+            time.sleep(self.poll_interval)
+
+# -----------------------------
+# ENTRY
+# -----------------------------
+
+if __name__ == "__main__":
+    CategorizerModule().run()
