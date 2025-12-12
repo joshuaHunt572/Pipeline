@@ -1,0 +1,32 @@
+def _build_prompt(self, facts: List[str], unknown: List[str]) -> str:
+    return f"""
+You are a classification engine.
+
+Input:
+FACTS:
+{json.dumps(facts, indent=2)}
+
+UNKNOWN ITEMS:
+{json.dumps(unknown, indent=2)}
+
+Task:
+Classify the information into THREE categories:
+1. tasks (actionable items)
+2. events (time-bound or scheduled)
+3. notes (informational, non-actionable)
+
+Rules:
+- Output JSON ONLY
+- Do not invent information
+- If unsure, place the item in notes
+- Tasks must include: task, priority (low|medium|high), status
+- Events must include: event, date (or "TBD"), type
+- Notes are plain strings
+
+Output schema:
+{{
+  "tasks": [...],
+  "events": [...],
+  "notes": [...]
+}}
+"""
