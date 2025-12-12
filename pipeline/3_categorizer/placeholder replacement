@@ -1,0 +1,37 @@
+def categorize_facts(self, facts: List[str], unknown: List[str]) -> CategorizerOutput:
+    self.logger.info("Categorizing facts using LLM")
+
+    prompt = self._build_prompt(facts, unknown)
+
+    response = self.llm.chat.completions.create(
+        model=self.model,
+        messages=[
+            {"role": "system", "content": "You are a strict JSON classifier."},
+            {"role": "user", "content": prompt}
+        ],
+        temperature=0.2
+    )
+
+    raw = response.choices[0].message.content.strip()
+
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as e:
+        self.logger.error("LLM returned invalid JSON")
+        raise RuntimeError(f"Invalid LLM output: {raw}") from e
+
+    metadata = {
+        "timestamp": datetime.now().isoformat(),
+        "processing_module": "categorizer",
+        "model": self.model,
+        "tasks_count": len(parsed.get("tasks", [])),
+        "events_count": len(parsed.get("events", [])),
+        "notes_count": len(parsed.get("notes", [])),
+    }
+
+    return CategorizerOutput(
+        tasks=parsed.get("tasks", []),
+        events=parsed.get("events", []),
+        notes=parsed.get("notes", []),
+        metadata=metadata
+    )
